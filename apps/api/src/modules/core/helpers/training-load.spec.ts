@@ -3,6 +3,7 @@ import {
   advanceFitness,
   calculateTrimpFromAverage,
   calculateTrimpFromStream,
+  estimatePlannedSessionTrimp,
   estimatePlannedTrimp,
   getUtcWeekStart,
   startOfUtcDay,
@@ -131,6 +132,257 @@ describe('estimatePlannedTrimp', () => {
     expect(estimatePlannedTrimp(0, 0.5, profile)).toBeNull();
     expect(
       estimatePlannedTrimp(3600, 0.5, { ...profile, hrMax: HR_REST }),
+    ).toBeNull();
+  });
+});
+
+describe('estimatePlannedSessionTrimp', () => {
+  const profile = { hrMax: HR_MAX, hrRest: HR_REST, gender: 'male' as const };
+  const timedHrStep = (durationValue: number, hr: number) => ({
+    durationType: 'TIME',
+    durationValue,
+    targets: [{ targetType: 'HEARTRATE', targetValue: hr }],
+  });
+
+  it('uses duration and the stored 0–1 RPE scale when no complete workout exists', () => {
+    const result = estimatePlannedSessionTrimp({
+      goalDuration: 3600,
+      goalRpe: 0.5,
+      profile,
+    });
+    expect(result).toMatchObject({ method: 'DURATION_RPE' });
+    expect(result?.value).toBeCloseTo(
+      estimatePlannedTrimp(3600, 0.5, profile)!,
+    );
+  });
+
+  it('sums timed explicit-HR steps independently', () => {
+    const result = estimatePlannedSessionTrimp({
+      profile,
+      workout: { steps: [timedHrStep(600, 120), timedHrStep(600, 170)] },
+    });
+    expect(result).toMatchObject({ method: 'WORKOUT_HR_TARGETS' });
+    expect(result?.value).toBeCloseTo(
+      calculateTrimpFromAverage(120, 600, HR_MAX, HR_REST).value +
+        calculateTrimpFromAverage(170, 600, HR_MAX, HR_REST).value,
+    );
+    expect(result?.value).not.toBeCloseTo(
+      calculateTrimpFromAverage(145, 1200, HR_MAX, HR_REST).value,
+    );
+  });
+
+  it('uses the midpoint of a HR zone range and expands repeat blocks', () => {
+    const result = estimatePlannedSessionTrimp({
+      profile,
+      sport: 'RUNNING',
+      zones: [
+        {
+          trainingZoneId: 1,
+          type: 'HEARTRATE',
+          values: [{ min: 140, max: 160, sports: ['RUNNING'] }],
+        },
+      ],
+      workout: {
+        steps: [
+          {
+            durationType: 'TIME',
+            repeatBlock: {
+              repetitions: 3,
+              childSteps: [
+                {
+                  durationType: 'TIME',
+                  durationValue: 300,
+                  targets: [{ targetType: 'ZONE', targetValue: 1 }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(result?.value).toBeCloseTo(
+      3 * calculateTrimpFromAverage(150, 300, HR_MAX, HR_REST).value,
+    );
+  });
+
+  it('supports HR targets expressed as a fraction of HR max or reserve', () => {
+    const fromMax = estimatePlannedSessionTrimp({
+      profile,
+      workout: {
+        steps: [
+          {
+            durationType: 'TIME',
+            durationValue: 600,
+            targets: [
+              {
+                targetType: 'HEARTRATE',
+                targetValue: 0.8,
+                metricType: 'HR_MAX',
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const fromReserve = estimatePlannedSessionTrimp({
+      profile,
+      workout: {
+        steps: [
+          {
+            durationType: 'TIME',
+            durationValue: 600,
+            targets: [
+              {
+                targetType: 'HEARTRATE',
+                targetValue: 0.6,
+                metricType: 'HR_RESERVE',
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(fromMax?.value).toBeCloseTo(
+      calculateTrimpFromAverage(152, 600, HR_MAX, HR_REST).value,
+    );
+    expect(fromReserve?.value).toBeCloseTo(
+      calculateTrimpFromAverage(134, 600, HR_MAX, HR_REST).value,
+    );
+  });
+
+  it('uses female coefficients for structured estimates', () => {
+    const result = estimatePlannedSessionTrimp({
+      profile: { ...profile, gender: 'female' },
+      workout: { steps: [timedHrStep(3600, 150)] },
+    });
+    expect(result?.value).toBeCloseTo(121.4991, 3);
+  });
+
+  it('rejects partial workouts and only falls back with valid duration and RPE', () => {
+    const partialWorkout = {
+      steps: [
+        timedHrStep(600, 150),
+        { durationType: 'DISTANCE', durationValue: 1000, targets: [] },
+      ],
+    };
+    expect(
+      estimatePlannedSessionTrimp({ profile, workout: partialWorkout }),
+    ).toBeNull();
+    expect(
+      estimatePlannedSessionTrimp({
+        profile,
+        workout: partialWorkout,
+        goalDuration: 3600,
+        goalRpe: 0.6,
+      }),
+    ).toMatchObject({ method: 'DURATION_RPE' });
+  });
+
+  it('rejects invalid inputs rather than applying population defaults', () => {
+    expect(
+      estimatePlannedSessionTrimp({
+        profile: { ...profile, hrMax: HR_REST },
+        goalDuration: 3600,
+        goalRpe: 0.5,
+      }),
+    ).toBeNull();
+    expect(
+      estimatePlannedSessionTrimp({
+        profile,
+        goalDuration: 3600,
+        goalRpe: null,
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects HR targets and zones outside the athlete profile', () => {
+    const outOfRangeStep = (target: {
+      targetType: string;
+      targetValue?: number;
+    }) => ({
+      steps: [
+        {
+          durationType: 'TIME',
+          durationValue: 600,
+          targets: [target],
+        },
+      ],
+    });
+    expect(
+      estimatePlannedSessionTrimp({
+        profile,
+        workout: outOfRangeStep({ targetType: 'HEARTRATE', targetValue: 220 }),
+      }),
+    ).toBeNull();
+    expect(
+      estimatePlannedSessionTrimp({
+        profile,
+        sport: 'RUNNING',
+        zones: [
+          {
+            trainingZoneId: 1,
+            type: 'HEARTRATE',
+            values: [{ min: 180, max: 220, sports: ['RUNNING'] }],
+          },
+        ],
+        workout: outOfRangeStep({ targetType: 'ZONE', targetValue: 1 }),
+      }),
+    ).toBeNull();
+  });
+
+  it.each([
+    [{ repetitions: 0, childSteps: [timedHrStep(60, 150)] }],
+    [{ repetitions: 1.5, childSteps: [timedHrStep(60, 150)] }],
+    [{ repetitions: 1, childSteps: [] }],
+  ])('rejects an invalid repeat block', (repeatBlock) => {
+    expect(
+      estimatePlannedSessionTrimp({
+        profile,
+        workout: { steps: [{ durationType: 'TIME', repeatBlock }] },
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects ambiguous and sport-inapplicable HR zones', () => {
+    const targetWorkout = {
+      steps: [
+        {
+          durationType: 'TIME',
+          durationValue: 600,
+          targets: [{ targetType: 'ZONE', targetValue: 1 }],
+        },
+      ],
+    };
+    expect(
+      estimatePlannedSessionTrimp({
+        profile,
+        sport: 'RUNNING',
+        workout: targetWorkout,
+        zones: [
+          {
+            trainingZoneId: 1,
+            type: 'HEARTRATE',
+            values: [
+              { min: 140, max: 150, sports: ['RUNNING'] },
+              { min: 150, max: 160, sports: ['RUNNING'] },
+            ],
+          },
+        ],
+      }),
+    ).toBeNull();
+    expect(
+      estimatePlannedSessionTrimp({
+        profile,
+        sport: 'RUNNING',
+        workout: targetWorkout,
+        zones: [
+          {
+            trainingZoneId: 1,
+            type: 'HEARTRATE',
+            values: [{ min: 140, max: 150, sports: ['CYCLING'] }],
+          },
+        ],
+      }),
     ).toBeNull();
   });
 });

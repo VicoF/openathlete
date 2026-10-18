@@ -46,7 +46,7 @@ import {
   advanceFitness,
   calculateTrimpFromAverage,
   calculateTrimpFromStream,
-  estimatePlannedTrimp,
+  estimatePlannedSessionTrimp,
   getUtcWeekStart,
   startOfUtcDay,
   toUtcDateKey,
@@ -1129,9 +1129,12 @@ export class TrainingLoadService {
     return events.flatMap(({ startDate, training, competition }) => {
       const session = training ?? competition;
       if (!session) return [];
-      const fallback = profile
-        ? estimatePlannedTrimp(session.goalDuration, session.goalRpe, profile)
-        : null;
+      const fallback =
+        estimatePlannedSessionTrimp({
+          goalDuration: session.goalDuration,
+          goalRpe: session.goalRpe,
+          profile,
+        })?.value ?? null;
       return [
         {
           startDate,
