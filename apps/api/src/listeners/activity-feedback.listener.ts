@@ -6,6 +6,7 @@ import { InputJsonValue } from '@openathlete/database/generated/client/runtime/l
 import { AiTask } from '@openathlete/shared';
 
 import { Language } from 'src/common/constants/languages.constant';
+import { formatRpe } from 'src/common/utils/rpe';
 import { ActivityImportedEvent } from 'src/events';
 import {
   feedbackQuestionsOutputSchema,
@@ -21,6 +22,9 @@ import {
 } from 'src/modules/agent/services/event-ai-helpers';
 import { AiModelResolverService, AiService } from 'src/modules/ai';
 import { PrismaService } from 'src/modules/prisma/services/prisma.service';
+
+const rpeOrNa = (rpe: number | null | undefined) =>
+  rpe === null || rpe === undefined ? 'n/a' : formatRpe(rpe);
 
 @Injectable()
 export class ActivityFeedbackListener {
@@ -149,9 +153,9 @@ export class ActivityFeedbackListener {
       const training = activity.relatedTraining;
       const competition = activity.relatedCompetition;
       const goalSummary = training
-        ? `Target distance: ${training.goalDistance ?? 'n/a'} m, Target elevation gain: ${training.goalElevationGain ?? 'n/a'} m, Target duration: ${training.goalDuration ?? 'n/a'} s, Target RPE: ${training.goalRpe ?? 'n/a'}`
+        ? `Target distance: ${training.goalDistance ?? 'n/a'} m, Target elevation gain: ${training.goalElevationGain ?? 'n/a'} m, Target duration: ${training.goalDuration ?? 'n/a'} s, Target RPE: ${rpeOrNa(training.goalRpe)}`
         : competition
-          ? `Target distance: ${competition.goalDistance ?? 'n/a'} m, Target elevation gain: ${competition.goalElevationGain ?? 'n/a'} m, Target duration: ${competition.goalDuration ?? 'n/a'} s, Target RPE: ${competition.goalRpe ?? 'n/a'}`
+          ? `Target distance: ${competition.goalDistance ?? 'n/a'} m, Target elevation gain: ${competition.goalElevationGain ?? 'n/a'} m, Target duration: ${competition.goalDuration ?? 'n/a'} s, Target RPE: ${rpeOrNa(competition.goalRpe)}`
           : 'No goals specified';
 
       const injuriesSummary =
@@ -174,21 +178,25 @@ export class ActivityFeedbackListener {
         '',
         'PLANNED (if available):',
         training
-          ? `- Target distance: ${training.goalDistance ?? 'n/a'} m\n- Target elevation gain: ${training.goalElevationGain ?? 'n/a'} m\n- Target duration: ${training.goalDuration ?? 'n/a'} s\n- Target RPE: ${training.goalRpe ?? 'n/a'}`
+          ? `- Target distance: ${training.goalDistance ?? 'n/a'} m\n- Target elevation gain: ${training.goalElevationGain ?? 'n/a'} m\n- Target duration: ${training.goalDuration ?? 'n/a'} s\n- Target RPE: ${rpeOrNa(training.goalRpe)}`
           : 'No planned training linked to this activity.',
         '',
         'COMPLETED:',
         `- Distance: ${activity.distance} m`,
         `- Elevation gain: ${activity.elevationGain} m`,
         `- Duration (moving_time): ${activity.movingTime} s`,
-        `- Actual RPE: ${activity.rpe ?? 'n/a'}`,
+        `- Actual RPE: ${rpeOrNa(activity.rpe)}`,
         `- Average HR: ${activity.averageHeartrate ?? 'n/a'} bpm`,
       ].join('\n');
 
       const targetLanguage =
-        { FR: 'French', EN: 'English', IT: 'Italian', ES: 'Spanish' }[
-          userLanguage
-        ] ?? 'English';
+        {
+          FR: 'French',
+          EN: 'English',
+          IT: 'Italian',
+          ES: 'Spanish',
+          PT_BR: 'Portuguese (Brazil)',
+        }[userLanguage] ?? 'English';
 
       const context = [
         '=== ATHLETE PROFILE & CURRENT LOAD ===',
@@ -208,7 +216,7 @@ export class ActivityFeedbackListener {
         '',
         `=== LANGUAGE REQUIREMENT ===`,
         `IMPORTANT: Generate all questions and QCM option labels in ${targetLanguage} (${userLanguage}).`,
-        `Use ${({ French: 'tu', Italian: 'tu', Spanish: 'tú', English: 'you' } as Record<string, string>)[targetLanguage]} form, direct and friendly coaching style.`,
+        `Use ${({ French: 'tu', Italian: 'tu', Spanish: 'tú', English: 'you', 'Portuguese (Brazil)': 'você' } as Record<string, string>)[targetLanguage]} form, direct and friendly coaching style.`,
       ].join('\n');
 
       const { questions } = await this.aiService.generateObject(
