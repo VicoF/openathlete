@@ -17,8 +17,9 @@ import {
 import { AiModelResolverService, AiService } from 'src/modules/ai';
 import { isRetryableAiError } from 'src/modules/ai/ai.errors';
 import {
-  HeartRateProfile,
   estimatePlannedSessionTrimp,
+  estimatePlannedTrimp,
+  getHeartRateProfile,
 } from 'src/modules/core/helpers/training-load';
 
 import {
@@ -51,7 +52,9 @@ type EventForAiFallback = {
   athlete: { user: { gender: string | null } } | null;
 };
 
-@Processor('training-load-estimation', { concurrency: 2 })
+@Processor('training-load-estimation', {
+  concurrency: 2, // Limits concurrent calls on users' AI keys
+})
 export class TrainingLoadEstimationProcessor extends WorkerHost {
   private readonly logger = new Logger(TrainingLoadEstimationProcessor.name);
 
@@ -70,6 +73,10 @@ export class TrainingLoadEstimationProcessor extends WorkerHost {
     const { eventId, eventTrainingId, athleteId } = job.data;
 
     try {
+      this.logger.log(
+        `Processing training load estimation for event ${eventId} (training ${eventTrainingId})...`,
+      );
+
       const event = await this.prisma.event.findUnique({
         where: { eventId },
         include: {
@@ -114,7 +121,7 @@ export class TrainingLoadEstimationProcessor extends WorkerHost {
         throw new Error(`Event ${eventId} or training data not found`);
       }
 
-      const profile = this.getHeartRateProfile(
+      const profile = getHeartRateProfile(
         event.athlete.metrics,
         event.athlete.user.gender,
       );
@@ -134,6 +141,7 @@ export class TrainingLoadEstimationProcessor extends WorkerHost {
           eventTrainingId,
           athleteId,
           deterministicEstimate.value,
+          deterministicEstimate.method,
         );
         return {
           success: true,
@@ -158,6 +166,7 @@ export class TrainingLoadEstimationProcessor extends WorkerHost {
           eventTrainingId,
           athleteId,
           aiEstimate,
+          'AI_FALLBACK',
         );
         return {
           success: true,
@@ -166,6 +175,35 @@ export class TrainingLoadEstimationProcessor extends WorkerHost {
           trimp: aiEstimate,
           method: 'AI_FALLBACK',
         };
+      }
+
+      // If AI was not available or could not estimate, fall back to duration and RPE if available.
+      if (
+        event.training.goalDuration &&
+        event.training.goalRpe != null &&
+        profile
+      ) {
+        const fallbackValue = estimatePlannedTrimp(
+          event.training.goalDuration,
+          event.training.goalRpe,
+          profile,
+        );
+        if (fallbackValue != null) {
+          await this.saveAndNotify(
+            eventId,
+            eventTrainingId,
+            athleteId,
+            fallbackValue,
+            'DURATION_RPE',
+          );
+          return {
+            success: true,
+            eventId,
+            eventTrainingId,
+            trimp: fallbackValue,
+            method: 'DURATION_RPE',
+          };
+        }
       }
 
       await this.clearUnavailableEstimate(eventId, eventTrainingId, athleteId);
@@ -195,34 +233,20 @@ export class TrainingLoadEstimationProcessor extends WorkerHost {
     eventTrainingId: number,
     athleteId: number,
     value: number,
+    method: string,
   ): Promise<void> {
     await this.prisma.eventTraining.update({
       where: { eventTrainingId },
       data: { estimatedLoad: value },
     });
+    this.logger.log(
+      `✨ Training load estimated for event ${eventId}: ${value} TRIMP (${method})`,
+    );
     this.calendarWebSocketService?.notifyTrainingLoadEstimationCompleted(
       eventId,
       athleteId,
       value,
     );
-  }
-
-  private getHeartRateProfile(
-    metrics: Array<{ type: MetricType; value: number }>,
-    gender: string | null,
-  ): HeartRateProfile | null {
-    const latest = new Map<MetricType, number>();
-    for (const metric of metrics) {
-      if (!latest.has(metric.type)) latest.set(metric.type, metric.value);
-    }
-    const hrMax = latest.get(MetricType.HR_MAX);
-    const hrRest = latest.get(MetricType.HR_REST);
-    if (hrMax == null || hrRest == null) return null;
-    return {
-      hrMax,
-      hrRest,
-      gender: gender === 'FEMALE' ? 'female' : 'male',
-    };
   }
 
   private async clearUnavailableEstimate(

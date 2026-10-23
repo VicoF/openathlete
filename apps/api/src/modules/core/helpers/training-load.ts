@@ -1,3 +1,4 @@
+import { MetricType } from '@openathlete/database';
 import { ActivityStream } from '@openathlete/shared';
 
 import {
@@ -136,6 +137,28 @@ export interface HeartRateProfile {
   gender: TrimpGender;
 }
 
+/**
+ * Resolves the athlete's heart rate profile from their latest recorded
+ * metrics and gender. Both HR_MAX and HR_REST are required.
+ */
+export function getHeartRateProfile(
+  metrics: Array<{ type: MetricType | string; value: number }>,
+  gender: string | null | undefined,
+): HeartRateProfile | null {
+  const latest = new Map<MetricType | string, number>();
+  for (const metric of metrics) {
+    if (!latest.has(metric.type)) latest.set(metric.type, metric.value);
+  }
+  const hrMax = latest.get(MetricType.HR_MAX);
+  const hrRest = latest.get(MetricType.HR_REST);
+  if (hrMax == null || hrRest == null) return null;
+  return {
+    hrMax,
+    hrRest,
+    gender: gender === 'FEMALE' ? 'female' : 'male',
+  };
+}
+
 export type PlannedTrimpEstimationMethod =
   'WORKOUT_HR_TARGETS' | 'DURATION_RPE';
 
@@ -234,7 +257,7 @@ function resolveExplicitHeartRateTarget(
         ? profile.hrRest + value * (profile.hrMax - profile.hrRest)
         : null;
     case 'HR_REST':
-      return value >= 0 && value <= 1 ? value * profile.hrRest : null;
+      return null;
     default:
       return null;
   }
@@ -360,6 +383,7 @@ export function estimatePlannedSessionTrimp(
       profile,
     );
     if (value != null) return { value, method: 'WORKOUT_HR_TARGETS' };
+    return null;
   }
 
   if (

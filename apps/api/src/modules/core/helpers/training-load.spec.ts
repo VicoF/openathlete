@@ -1,3 +1,5 @@
+import { MetricType } from '@openathlete/database';
+
 import {
   addUtcDays,
   advanceFitness,
@@ -5,6 +7,7 @@ import {
   calculateTrimpFromStream,
   estimatePlannedSessionTrimp,
   estimatePlannedTrimp,
+  getHeartRateProfile,
   getUtcWeekStart,
   startOfUtcDay,
   toUtcDateKey,
@@ -258,7 +261,7 @@ describe('estimatePlannedSessionTrimp', () => {
     expect(result?.value).toBeCloseTo(121.4991, 3);
   });
 
-  it('rejects partial workouts and only falls back with valid duration and RPE', () => {
+  it('rejects partial or unreadable workouts so they can reach AI estimation', () => {
     const partialWorkout = {
       steps: [
         timedHrStep(600, 150),
@@ -275,7 +278,29 @@ describe('estimatePlannedSessionTrimp', () => {
         goalDuration: 3600,
         goalRpe: 0.6,
       }),
-    ).toMatchObject({ method: 'DURATION_RPE' });
+    ).toBeNull();
+  });
+
+  it('rejects HR_REST as an explicit metric target type', () => {
+    const result = estimatePlannedSessionTrimp({
+      profile,
+      workout: {
+        steps: [
+          {
+            durationType: 'TIME',
+            durationValue: 600,
+            targets: [
+              {
+                targetType: 'HEARTRATE',
+                targetValue: 0.8,
+                metricType: 'HR_REST',
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(result).toBeNull();
   });
 
   it('rejects invalid inputs rather than applying population defaults', () => {
@@ -398,5 +423,44 @@ describe('advanceFitness', () => {
     expect(rested.ctl).toBeLessThan(state.ctl);
     // Form (CTL - ATL) improves with rest
     expect(rested.ctl - rested.atl).toBeGreaterThan(state.ctl - state.atl);
+  });
+});
+
+describe('getHeartRateProfile', () => {
+  it('extracts latest HR_MAX and HR_REST and respects female gender', () => {
+    const p = getHeartRateProfile(
+      [
+        { type: MetricType.HR_MAX, value: 185 },
+        { type: MetricType.HR_MAX, value: 190 },
+        { type: MetricType.HR_REST, value: 55 },
+      ],
+      'FEMALE',
+    );
+    expect(p).toEqual({
+      hrMax: 185,
+      hrRest: 55,
+      gender: 'female',
+    });
+  });
+
+  it('defaults gender to male for non-female or unspecified gender', () => {
+    const p = getHeartRateProfile(
+      [
+        { type: MetricType.HR_MAX, value: 195 },
+        { type: MetricType.HR_REST, value: 50 },
+      ],
+      null,
+    );
+    expect(p?.gender).toBe('male');
+  });
+
+  it('returns null if HR_MAX or HR_REST is missing', () => {
+    expect(
+      getHeartRateProfile([{ type: MetricType.HR_MAX, value: 195 }], 'MALE'),
+    ).toBeNull();
+    expect(
+      getHeartRateProfile([{ type: MetricType.HR_REST, value: 50 }], 'MALE'),
+    ).toBeNull();
+    expect(getHeartRateProfile([], 'MALE')).toBeNull();
   });
 });

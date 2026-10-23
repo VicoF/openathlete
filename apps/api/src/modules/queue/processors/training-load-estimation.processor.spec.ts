@@ -21,22 +21,29 @@ const job = () =>
 
 function event({
   steps = [],
+  estimatedLoad = null,
+  goalDuration = null,
+  goalRpe = null,
   metrics = [
     { type: MetricType.HR_MAX, value: 190 },
     { type: MetricType.HR_REST, value: 50 },
   ],
 }: {
   steps?: object[];
+  estimatedLoad?: number | null;
+  goalDuration?: number | null;
+  goalRpe?: number | null;
   metrics?: Array<{ type: MetricType; value: number }>;
 } = {}) {
   return {
     name: 'Workout',
     training: {
       sport: 'RUNNING',
-      goalDuration: null,
-      goalRpe: null,
+      goalDuration,
+      goalRpe,
       goalDistance: null,
       goalElevationGain: null,
+      estimatedLoad,
       workout: { steps },
     },
     athlete: {
@@ -136,5 +143,58 @@ describe('TrainingLoadEstimationProcessor', () => {
       null,
     );
     expect(calendar.notifyTrainingLoadEstimationFailed).not.toHaveBeenCalled();
+  });
+
+  it('clears a previous estimate and notifies the calendar when no estimate is available', async () => {
+    const { processor, prisma, resolver, calendar } = setup(
+      event({ estimatedLoad: 120 }),
+    );
+    resolver.tryResolveForAthlete.mockResolvedValue(null);
+
+    await expect(processor.process(job())).resolves.toMatchObject({
+      trimp: null,
+      method: null,
+    });
+    expect(prisma.eventTraining.update).toHaveBeenCalledWith({
+      where: { eventTrainingId: 20 },
+      data: { estimatedLoad: null },
+    });
+    expect(calendar.notifyTrainingLoadEstimationCompleted).toHaveBeenCalledWith(
+      10,
+      30,
+      null,
+    );
+    expect(calendar.notifyTrainingLoadEstimationFailed).not.toHaveBeenCalled();
+  });
+
+  it('falls back to duration and RPE when structured workout cannot be resolved by AI', async () => {
+    const { processor, prisma, resolver, calendar } = setup(
+      event({
+        steps: [
+          {
+            durationType: 'DISTANCE',
+            durationValue: 1000,
+            targets: [{ targetType: 'PACE', targetValue: 300 }],
+          },
+        ],
+        goalDuration: 3600,
+        goalRpe: 0.6,
+      }),
+    );
+    resolver.tryResolveForAthlete.mockResolvedValue(null);
+
+    const result = await processor.process(job());
+    expect(result).toMatchObject({
+      method: 'DURATION_RPE',
+    });
+    expect(prisma.eventTraining.update).toHaveBeenCalledWith({
+      where: { eventTrainingId: 20 },
+      data: { estimatedLoad: expect.any(Number) },
+    });
+    expect(calendar.notifyTrainingLoadEstimationCompleted).toHaveBeenCalledWith(
+      10,
+      30,
+      expect.any(Number),
+    );
   });
 });
