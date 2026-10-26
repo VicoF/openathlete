@@ -496,14 +496,37 @@ export class EventService {
         event.athlete.user.gender,
       );
 
-      const estimate = estimatePlannedSessionTrimp({
+      const estimationInput = {
         goalDuration: event.training.goalDuration,
         goalRpe: event.training.goalRpe,
         sport: event.training.sport,
         workout: event.training.workout,
         zones: event.athlete.trainingZones,
         profile,
+      };
+
+      const canScheduleAi =
+        isFuture && Boolean(this.trainingLoadEstimationService);
+      let estimate = estimatePlannedSessionTrimp({
+        ...estimationInput,
+        aiAvailable: canScheduleAi,
       });
+
+      if (!estimate && canScheduleAi && this.trainingLoadEstimationService) {
+        const scheduled =
+          await this.trainingLoadEstimationService.scheduleEstimation(
+            eventId,
+            eventTrainingId,
+            athleteId,
+          );
+        if (scheduled) {
+          return null;
+        }
+        estimate = estimatePlannedSessionTrimp({
+          ...estimationInput,
+          aiAvailable: false,
+        });
+      }
 
       if (estimate) {
         await this.prisma.eventTraining.update({
@@ -524,13 +547,7 @@ export class EventService {
         return estimate.value;
       }
 
-      if (isFuture && this.trainingLoadEstimationService) {
-        await this.trainingLoadEstimationService.scheduleEstimation(
-          eventId,
-          eventTrainingId,
-          athleteId,
-        );
-      } else if (event.training.estimatedLoad !== null) {
+      if (event.training.estimatedLoad !== null) {
         await this.prisma.eventTraining.update({
           where: { eventTrainingId },
           data: { estimatedLoad: null },

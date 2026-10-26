@@ -210,6 +210,7 @@ export interface PlannedTrimpEstimationInput {
   workout?: { steps?: PlannedWorkoutStep[] } | null;
   zones?: PlannedHeartRateZone[];
   profile: HeartRateProfile | null | undefined;
+  aiAvailable?: boolean;
 }
 
 function hasUsableHeartRateProfile(
@@ -383,7 +384,7 @@ export function estimatePlannedSessionTrimp(
       profile,
     );
     if (value != null) return { value, method: 'WORKOUT_HR_TARGETS' };
-    return null;
+    if (input.aiAvailable) return null;
   }
 
   if (

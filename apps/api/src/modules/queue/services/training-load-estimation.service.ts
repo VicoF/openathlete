@@ -9,6 +9,9 @@ import {
   forwardRef,
 } from '@nestjs/common';
 
+import { AiTask } from '@openathlete/shared';
+
+import { AiModelResolverService } from '../../ai/services/ai-model-resolver.service';
 import { CalendarWebSocketService } from '../../calendar/services/calendar-websocket.service';
 
 export interface TrainingLoadEstimationJobData {
@@ -24,6 +27,7 @@ export class TrainingLoadEstimationService {
   constructor(
     @InjectQueue('training-load-estimation')
     private readonly trainingLoadEstimationQueue: Queue<TrainingLoadEstimationJobData>,
+    private readonly aiModelResolver: AiModelResolverService,
     @Optional()
     @Inject(forwardRef(() => CalendarWebSocketService))
     private readonly calendarWebSocketService?: CalendarWebSocketService,
@@ -33,8 +37,20 @@ export class TrainingLoadEstimationService {
     eventId: number,
     eventTrainingId: number,
     athleteId: number,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
+      // Only estimate when the athlete (or a coach) has AI for it
+      const model = await this.aiModelResolver.tryResolveForAthlete(
+        AiTask.TRAINING_LOAD_ESTIMATION,
+        athleteId,
+      );
+      if (!model) {
+        this.logger.debug(
+          `No AI for training load estimation of athlete ${athleteId}, not scheduling event ${eventId}`,
+        );
+        return false;
+      }
+
       const jobId = `training-load-estimation-${eventId}`;
 
       const existingJob = await this.trainingLoadEstimationQueue.getJob(jobId);
@@ -92,6 +108,7 @@ export class TrainingLoadEstimationService {
       this.logger.log(
         `Scheduled training load estimation for event ${eventId} (athlete ${athleteId}) in 1 minute`,
       );
+      return true;
     } catch (error) {
       this.logger.error(
         `Failed to schedule training load estimation for event ${eventId}: ${error instanceof Error ? error.message : String(error)}`,

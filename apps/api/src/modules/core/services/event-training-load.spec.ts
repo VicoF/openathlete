@@ -12,7 +12,7 @@ describe('EventService.computeAndApplyPlannedTrainingLoad', () => {
   function createService({
     event,
     cancelEstimation = jest.fn().mockResolvedValue(undefined),
-    scheduleEstimation = jest.fn().mockResolvedValue(undefined),
+    scheduleEstimation = jest.fn().mockResolvedValue(true),
   }: {
     event: unknown;
     cancelEstimation?: jest.Mock;
@@ -193,11 +193,60 @@ describe('EventService.computeAndApplyPlannedTrainingLoad', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('falls back to duration and RPE when AI is not available for athlete on unreadable structured workout', async () => {
+    const paceWorkoutEvent = {
+      ...baseEvent,
+      training: {
+        ...baseEvent.training,
+        workout: {
+          steps: [
+            {
+              durationType: 'DISTANCE',
+              durationValue: 1000,
+              targets: [{ targetType: 'PACE', targetValue: 300 }],
+            },
+          ],
+        },
+      },
+    };
+
+    const {
+      service,
+      prisma,
+      calendarWebSocketService,
+      trainingLoadEstimationService,
+    } = createService({
+      event: paceWorkoutEvent,
+      scheduleEstimation: jest.fn().mockResolvedValue(false),
+    });
+
+    const result = await service.computeAndApplyPlannedTrainingLoad(
+      eventId,
+      athleteId,
+      eventTrainingId,
+      true,
+    );
+
+    expect(result).toBeGreaterThan(0);
+    expect(
+      trainingLoadEstimationService.scheduleEstimation,
+    ).toHaveBeenCalledWith(eventId, eventTrainingId, athleteId);
+    expect(prisma.eventTraining.update).toHaveBeenCalledWith({
+      where: { eventTrainingId },
+      data: { estimatedLoad: result },
+    });
+    expect(
+      calendarWebSocketService.notifyTrainingLoadEstimationCompleted,
+    ).toHaveBeenCalledWith(eventId, athleteId, result);
+  });
+
   it('clears previous estimate when unestimable and session is in the past', async () => {
     const pastUnestimableEvent = {
       ...baseEvent,
       training: {
         ...baseEvent.training,
+        goalDuration: null,
+        goalRpe: null,
         estimatedLoad: 85,
         workout: {
           steps: [

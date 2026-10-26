@@ -18,7 +18,6 @@ import { AiModelResolverService, AiService } from 'src/modules/ai';
 import { isRetryableAiError } from 'src/modules/ai/ai.errors';
 import {
   estimatePlannedSessionTrimp,
-  estimatePlannedTrimp,
   getHeartRateProfile,
 } from 'src/modules/core/helpers/training-load';
 
@@ -126,13 +125,18 @@ export class TrainingLoadEstimationProcessor extends WorkerHost {
         event.athlete.user.gender,
       );
 
-      const deterministicEstimate = estimatePlannedSessionTrimp({
+      const estimationInput = {
         goalDuration: event.training.goalDuration,
         goalRpe: event.training.goalRpe,
         sport: event.training.sport,
         workout: event.training.workout,
         zones: event.athlete.trainingZones,
         profile,
+      };
+
+      const deterministicEstimate = estimatePlannedSessionTrimp({
+        ...estimationInput,
+        aiAvailable: true,
       });
 
       if (deterministicEstimate) {
@@ -178,32 +182,25 @@ export class TrainingLoadEstimationProcessor extends WorkerHost {
       }
 
       // If AI was not available or could not estimate, fall back to duration and RPE if available.
-      if (
-        event.training.goalDuration &&
-        event.training.goalRpe != null &&
-        profile
-      ) {
-        const fallbackValue = estimatePlannedTrimp(
-          event.training.goalDuration,
-          event.training.goalRpe,
-          profile,
+      const fallbackEstimate = estimatePlannedSessionTrimp({
+        ...estimationInput,
+        aiAvailable: false,
+      });
+      if (fallbackEstimate) {
+        await this.saveAndNotify(
+          eventId,
+          eventTrainingId,
+          athleteId,
+          fallbackEstimate.value,
+          fallbackEstimate.method,
         );
-        if (fallbackValue != null) {
-          await this.saveAndNotify(
-            eventId,
-            eventTrainingId,
-            athleteId,
-            fallbackValue,
-            'DURATION_RPE',
-          );
-          return {
-            success: true,
-            eventId,
-            eventTrainingId,
-            trimp: fallbackValue,
-            method: 'DURATION_RPE',
-          };
-        }
+        return {
+          success: true,
+          eventId,
+          eventTrainingId,
+          trimp: fallbackEstimate.value,
+          method: fallbackEstimate.method,
+        };
       }
 
       await this.clearUnavailableEstimate(eventId, eventTrainingId, athleteId);

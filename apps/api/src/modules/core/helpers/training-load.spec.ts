@@ -261,7 +261,7 @@ describe('estimatePlannedSessionTrimp', () => {
     expect(result?.value).toBeCloseTo(121.4991, 3);
   });
 
-  it('rejects partial or unreadable workouts so they can reach AI estimation', () => {
+  it('rejects partial or unreadable workouts when AI is available, and falls back to duration/RPE when AI is not available', () => {
     const partialWorkout = {
       steps: [
         timedHrStep(600, 150),
@@ -277,8 +277,21 @@ describe('estimatePlannedSessionTrimp', () => {
         workout: partialWorkout,
         goalDuration: 3600,
         goalRpe: 0.6,
+        aiAvailable: true,
       }),
     ).toBeNull();
+    expect(
+      estimatePlannedSessionTrimp({
+        profile,
+        workout: partialWorkout,
+        goalDuration: 3600,
+        goalRpe: 0.6,
+        aiAvailable: false,
+      }),
+    ).toEqual({
+      value: expect.any(Number),
+      method: 'DURATION_RPE',
+    });
   });
 
   it('rejects HR_REST as an explicit metric target type', () => {
