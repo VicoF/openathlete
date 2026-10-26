@@ -496,35 +496,31 @@ export class EventService {
         event.athlete.user.gender,
       );
 
-      const estimationInput = {
+      let estimate = estimatePlannedSessionTrimp({
         goalDuration: event.training.goalDuration,
         goalRpe: event.training.goalRpe,
         sport: event.training.sport,
         workout: event.training.workout,
         zones: event.athlete.trainingZones,
         profile,
-      };
-
-      const canScheduleAi =
-        isFuture && Boolean(this.trainingLoadEstimationService);
-      let estimate = estimatePlannedSessionTrimp({
-        ...estimationInput,
-        aiAvailable: canScheduleAi,
       });
 
-      if (!estimate && canScheduleAi && this.trainingLoadEstimationService) {
-        const scheduled =
-          await this.trainingLoadEstimationService.scheduleEstimation(
-            eventId,
-            eventTrainingId,
-            athleteId,
-          );
-        if (scheduled) {
-          return null;
+      if (!estimate) {
+        if (isFuture && this.trainingLoadEstimationService) {
+          const scheduled =
+            await this.trainingLoadEstimationService.scheduleEstimation(
+              eventId,
+              eventTrainingId,
+              athleteId,
+            );
+          if (scheduled) {
+            return null;
+          }
         }
         estimate = estimatePlannedSessionTrimp({
-          ...estimationInput,
-          aiAvailable: false,
+          goalDuration: event.training.goalDuration,
+          goalRpe: event.training.goalRpe,
+          profile,
         });
       }
 

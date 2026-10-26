@@ -125,18 +125,13 @@ export class TrainingLoadEstimationProcessor extends WorkerHost {
         event.athlete.user.gender,
       );
 
-      const estimationInput = {
+      const deterministicEstimate = estimatePlannedSessionTrimp({
         goalDuration: event.training.goalDuration,
         goalRpe: event.training.goalRpe,
         sport: event.training.sport,
         workout: event.training.workout,
         zones: event.athlete.trainingZones,
         profile,
-      };
-
-      const deterministicEstimate = estimatePlannedSessionTrimp({
-        ...estimationInput,
-        aiAvailable: true,
       });
 
       if (deterministicEstimate) {
@@ -183,8 +178,9 @@ export class TrainingLoadEstimationProcessor extends WorkerHost {
 
       // If AI was not available or could not estimate, fall back to duration and RPE if available.
       const fallbackEstimate = estimatePlannedSessionTrimp({
-        ...estimationInput,
-        aiAvailable: false,
+        goalDuration: event.training.goalDuration,
+        goalRpe: event.training.goalRpe,
+        profile,
       });
       if (fallbackEstimate) {
         await this.saveAndNotify(
