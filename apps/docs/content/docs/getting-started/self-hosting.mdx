@@ -120,15 +120,6 @@ AI features (workout generation and editing, post-activity questions, feedback a
 
 For background features (post-activity questions, feedback analysis, AI load estimation fallback), an athlete without AI uses their coach's key or plan.
 
-#### How planned load is estimated
-
-Planned training load is estimated deterministically whenever possible, without invoking an AI model:
-- **Heart-rate targets**: if every step of a structured workout has heart-rate targets (as target bpm, HR zones, % HR max, or % HR reserve), Banister TRIMP is integrated step by step over the workout structure (`WORKOUT_HR_TARGETS`).
-- **Duration and RPE**: sessions without a structured workout are estimated using the session's duration and target RPE (`DURATION_RPE`).
-- **Athlete profile requirements**: both deterministic methods require the athlete to have recorded their resting and maximum heart rates (`HR_REST` and `HR_MAX`) under **Settings > Profile > Metrics**.
-
-When a workout has a structure that cannot be resolved from heart-rate targets alone (such as pace, power, or distance steps) and `ENABLE_TRAINING_LOAD_ESTIMATION` is enabled, OpenAthlete calls an AI model to estimate its load (`AI_FALLBACK`). If AI is unavailable or fails, estimation falls back to duration and target RPE when available.
-
 ### AI agents (MCP)
 
 Users can connect AI agents (Claude, ChatGPT, Cursor...) to their account
