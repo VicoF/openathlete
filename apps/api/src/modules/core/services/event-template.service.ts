@@ -3,12 +3,8 @@ import { subject } from '@casl/ability';
 import {
   BadRequestException,
   ForbiddenException,
-  Inject,
   Injectable,
-  Logger,
   NotFoundException,
-  Optional,
-  forwardRef,
 } from '@nestjs/common';
 
 import { EventTemplate, Event as PrismaEvent } from '@openathlete/database';
@@ -18,21 +14,15 @@ import { CaslAbilityFactory } from 'src/modules/auth';
 import { AuthUser } from 'src/modules/auth/decorators/user.decorator';
 import { PrismaService } from 'src/modules/prisma/services/prisma.service';
 
-import { TrainingLoadEstimationService } from '../../queue/services/training-load-estimation.service';
 import { EVENT_INCLUDES } from './event-includes';
 import { EventService } from './event.service';
 
 @Injectable()
 export class EventTemplateService {
-  private readonly logger = new Logger(EventTemplateService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private eventService: EventService,
     private readonly abilities: CaslAbilityFactory,
-    @Optional()
-    @Inject(forwardRef(() => TrainingLoadEstimationService))
-    private trainingLoadEstimationService?: TrainingLoadEstimationService,
   ) {}
 
   async getMyEventTemplates(user: AuthUser, search?: string) {

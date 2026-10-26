@@ -1,8 +1,8 @@
-jest.mock('@garmin/fitsdk', () => ({}));
-
 import { MetricType } from '@openathlete/database';
 
 import { EventService } from './event.service';
+
+jest.mock('@garmin/fitsdk', () => ({}));
 
 describe('EventService.computeAndApplyPlannedTrainingLoad', () => {
   const athleteId = 42;
@@ -14,7 +14,7 @@ describe('EventService.computeAndApplyPlannedTrainingLoad', () => {
     cancelEstimation = jest.fn().mockResolvedValue(undefined),
     scheduleEstimation = jest.fn().mockResolvedValue(undefined),
   }: {
-    event: any;
+    event: unknown;
     cancelEstimation?: jest.Mock;
     scheduleEstimation?: jest.Mock;
   }) {
@@ -35,15 +35,15 @@ describe('EventService.computeAndApplyPlannedTrainingLoad', () => {
     };
 
     const service = new EventService(
-      prisma as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      trainingLoadEstimationService as any,
-      calendarWebSocketService as any,
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      trainingLoadEstimationService as never,
+      calendarWebSocketService as never,
     );
 
     return {
