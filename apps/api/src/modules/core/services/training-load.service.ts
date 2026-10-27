@@ -1051,12 +1051,13 @@ export class TrainingLoadService {
   async getHeartRateProfile(
     athleteId: number,
   ): Promise<HeartRateProfile | null> {
-    const [metrics, athlete] = await Promise.all([
-      this.prisma.athleteMetric.findMany({
-        where: {
-          athleteId,
-          type: { in: [MetricType.HR_MAX, MetricType.HR_REST] },
-        },
+    const [hrMax, hrRest, athlete] = await Promise.all([
+      this.prisma.athleteMetric.findFirst({
+        where: { athleteId, type: MetricType.HR_MAX },
+        orderBy: { date: 'desc' },
+      }),
+      this.prisma.athleteMetric.findFirst({
+        where: { athleteId, type: MetricType.HR_REST },
         orderBy: { date: 'desc' },
       }),
       this.prisma.athlete.findUnique({
@@ -1064,7 +1065,13 @@ export class TrainingLoadService {
         select: { user: { select: { gender: true } } },
       }),
     ]);
-    return getHeartRateProfile(metrics, athlete?.user?.gender);
+    return getHeartRateProfile(
+      [
+        ...(hrMax ? [{ type: MetricType.HR_MAX, value: hrMax.value }] : []),
+        ...(hrRest ? [{ type: MetricType.HR_REST, value: hrRest.value }] : []),
+      ],
+      athlete?.user?.gender,
+    );
   }
 
   /**

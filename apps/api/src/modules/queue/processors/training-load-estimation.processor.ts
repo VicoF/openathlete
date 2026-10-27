@@ -109,6 +109,7 @@ export class TrainingLoadEstimationProcessor extends WorkerHost {
                   type: { in: [MetricType.HR_MAX, MetricType.HR_REST] },
                 },
                 orderBy: { date: 'desc' },
+                distinct: ['type'],
               },
               trainingZones: { include: { values: true } },
             },

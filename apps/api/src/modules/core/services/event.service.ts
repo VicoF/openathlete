@@ -61,11 +61,44 @@ import {
   uncompressActivityStream,
 } from '../helpers/activity-stream';
 import {
+  PlannedWorkoutStep,
   estimatePlannedSessionTrimp,
   getHeartRateProfile,
 } from '../helpers/training-load';
 import { EVENT_INCLUDES } from './event-includes';
 import { WorkoutService } from './workout.service';
+
+type ComparableStep = PlannedWorkoutStep & {
+  stepType?: string | null;
+  repeatBlock?: {
+    repetitions: number;
+    childSteps?: ComparableStep[];
+  } | null;
+};
+
+function normalizeStepForLoadComparison(step: ComparableStep): unknown {
+  return {
+    stepType: step.stepType ?? 'STEADY',
+    durationType: step.durationType ?? 'OPEN',
+    durationValue: step.durationValue ?? null,
+    targets: (step.targets ?? []).map((target) => ({
+      targetType: target.targetType,
+      targetMin: target.targetMin ?? null,
+      targetMax: target.targetMax ?? null,
+      targetValue: target.targetValue ?? null,
+      metricType: target.metricType ?? null,
+    })),
+    repeatBlock:
+      step.repeatBlock && step.repeatBlock.childSteps?.length
+        ? {
+            repetitions: step.repeatBlock.repetitions,
+            childSteps: step.repeatBlock.childSteps.map(
+              normalizeStepForLoadComparison,
+            ),
+          }
+        : null,
+  };
+}
 
 @Injectable()
 export class EventService {
@@ -447,52 +480,61 @@ export class EventService {
     isFuture: boolean,
   ): Promise<number | null> {
     try {
-      const event = await this.prisma.event.findUnique({
-        where: { eventId },
-        include: {
-          training: {
-            include: {
-              workout: {
-                include: {
-                  steps: {
-                    include: {
-                      targets: true,
-                      repeatBlock: {
-                        include: {
-                          childSteps: {
-                            include: { targets: true },
-                            orderBy: { orderIndex: 'asc' },
+      const [event, hrMax, hrRest] = await Promise.all([
+        this.prisma.event.findUnique({
+          where: { eventId },
+          include: {
+            training: {
+              include: {
+                workout: {
+                  include: {
+                    steps: {
+                      include: {
+                        targets: true,
+                        repeatBlock: {
+                          include: {
+                            childSteps: {
+                              include: { targets: true },
+                              orderBy: { orderIndex: 'asc' },
+                            },
                           },
                         },
                       },
+                      orderBy: { orderIndex: 'asc' },
                     },
-                    orderBy: { orderIndex: 'asc' },
                   },
                 },
               },
             },
-          },
-          athlete: {
-            include: {
-              user: { select: { gender: true } },
-              metrics: {
-                where: {
-                  type: { in: [MetricType.HR_MAX, MetricType.HR_REST] },
-                },
-                orderBy: { date: 'desc' },
+            athlete: {
+              include: {
+                user: { select: { gender: true } },
+                trainingZones: { include: { values: true } },
               },
-              trainingZones: { include: { values: true } },
             },
           },
-        },
-      });
+        }),
+        this.prisma.athleteMetric.findFirst({
+          where: { athleteId, type: MetricType.HR_MAX },
+          orderBy: { date: 'desc' },
+        }),
+        this.prisma.athleteMetric.findFirst({
+          where: { athleteId, type: MetricType.HR_REST },
+          orderBy: { date: 'desc' },
+        }),
+      ]);
 
       if (!event?.training || !event.athlete) {
         return null;
       }
 
       const profile = getHeartRateProfile(
-        event.athlete.metrics,
+        [
+          ...(hrMax ? [{ type: MetricType.HR_MAX, value: hrMax.value }] : []),
+          ...(hrRest
+            ? [{ type: MetricType.HR_REST, value: hrRest.value }]
+            : []),
+        ],
         event.athlete.user.gender,
       );
 
@@ -562,6 +604,59 @@ export class EventService {
       );
       return null;
     }
+  }
+
+  private shouldRecomputePlannedTrainingLoad(
+    previous: {
+      estimatedLoad: number | null;
+      sport: string;
+      goalDuration: number | null;
+      goalRpe: number | null;
+      workout?: { steps?: ComparableStep[] } | null;
+    },
+    data: UpdateEventDto,
+  ): boolean {
+    if (previous.estimatedLoad === null) {
+      return true;
+    }
+    if (
+      'sport' in data &&
+      data.sport !== undefined &&
+      data.sport !== previous.sport
+    ) {
+      return true;
+    }
+    if (
+      'goalDuration' in data &&
+      data.goalDuration !== undefined &&
+      data.goalDuration !== previous.goalDuration
+    ) {
+      return true;
+    }
+    if (
+      'goalRpe' in data &&
+      data.goalRpe !== undefined &&
+      data.goalRpe !== previous.goalRpe
+    ) {
+      return true;
+    }
+    if ('workout' in data && data.workout !== undefined) {
+      if (data.workout === null) {
+        return (previous.workout?.steps?.length ?? 0) > 0;
+      }
+      if (data.workout.steps !== undefined) {
+        const previousSteps = (previous.workout?.steps ?? []).map(
+          normalizeStepForLoadComparison,
+        );
+        const nextSteps = (data.workout.steps as ComparableStep[]).map(
+          normalizeStepForLoadComparison,
+        );
+        if (JSON.stringify(previousSteps) !== JSON.stringify(nextSteps)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   emitWorkoutPlannedChanged(
@@ -765,7 +860,12 @@ export class EventService {
     }
 
     // Recompute training load or schedule AI estimation for training events (skip for templates)
-    if (!isTemplate && event.type === 'TRAINING' && event.training) {
+    if (
+      !isTemplate &&
+      event.type === 'TRAINING' &&
+      event.training &&
+      this.shouldRecomputePlannedTrainingLoad(event.training, data)
+    ) {
       const isFuture = updatedEvent.startDate > startOfDay(new Date());
       await this.computeAndApplyPlannedTrainingLoad(
         eventId,
